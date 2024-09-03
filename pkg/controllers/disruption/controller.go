@@ -144,6 +144,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			return reconcile.Result{}, fmt.Errorf("disrupting via reason=%q, %w", strings.ToLower(string(m.Reason())), err)
 		}
 		if success {
+			log.FromContext(ctx).V(1).Info(fmt.Sprintf("[kevin] disrupted successfully via reason %q", strings.ToLower(string(m.Reason()))))
 			return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 		}
 	}
@@ -183,6 +184,7 @@ func (c *Controller) disrupt(ctx context.Context, disruption Method) (bool, erro
 	}
 
 	// Attempt to disrupt
+	log.FromContext(ctx).V(1).Info(fmt.Sprintf("[kevin] disrupting %d candidates via %s", len(cmd.candidates), cmd))
 	if err := c.executeCommand(ctx, disruption, cmd, schedulingResults); err != nil {
 		return false, fmt.Errorf("disrupting candidates, %w", err)
 	}
