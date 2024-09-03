@@ -75,7 +75,9 @@ func NewController(clk clock.Clock, kubeClient client.Client, cloudProvider clou
 func (c *Controller) Reconcile(ctx context.Context, n *corev1.Node) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, "node.termination")
 
+	log.FromContext(ctx).Info("[kevin] node termination controller reconciling...", "node", n.Name)
 	if !n.GetDeletionTimestamp().IsZero() {
+		log.FromContext(ctx).Info("[kevin] node termination controller finalizing...", "node", n.Name)
 		return c.finalize(ctx, n)
 	}
 	return reconcile.Result{}, nil
@@ -167,9 +169,12 @@ func (c *Controller) deleteAllNodeClaims(ctx context.Context, nodeClaims ...*v1.
 	for _, nodeClaim := range nodeClaims {
 		// If we still get the NodeClaim, but it's already marked as terminating, we don't need to call Delete again
 		if nodeClaim.DeletionTimestamp.IsZero() {
+			log.FromContext(ctx).Info("[kevin] deleting nodeclaim", "nodeclaim", nodeClaim.Name)
 			if err := c.kubeClient.Delete(ctx, nodeClaim); err != nil {
 				return client.IgnoreNotFound(err)
 			}
+		} else {
+			log.FromContext(ctx).Info("[kevin] didn't need to delete nodeclaim", "nodeclaim", nodeClaim.Name)
 		}
 	}
 	return nil
