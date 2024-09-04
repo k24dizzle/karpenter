@@ -123,7 +123,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// with making any scheduling decision off of our state nodes. Otherwise, we have the potential to make
 	// a scheduling decision based on a smaller subset of nodes in our cluster state than actually exist.
 	if !c.cluster.Synced(ctx) {
-		log.FromContext(ctx).V(1).Info("waiting on cluster sync")
+		log.FromContext(ctx).Info("waiting on cluster sync")
 		return reconcile.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -144,7 +144,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			return reconcile.Result{}, fmt.Errorf("disrupting via reason=%q, %w", strings.ToLower(string(m.Reason())), err)
 		}
 		if success {
-			log.FromContext(ctx).V(1).Info(fmt.Sprintf("[kevin] disrupted successfully via reason %q", strings.ToLower(string(m.Reason()))))
+			log.FromContext(ctx).Info(fmt.Sprintf("[kevin] disrupted successfully via reason %q", strings.ToLower(string(m.Reason()))))
 			return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 		}
 	}
@@ -184,7 +184,7 @@ func (c *Controller) disrupt(ctx context.Context, disruption Method) (bool, erro
 	}
 
 	// Attempt to disrupt
-	log.FromContext(ctx).V(1).Info(fmt.Sprintf("[kevin] disrupting %d candidates via %s", len(cmd.candidates), cmd))
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] disrupting %d candidates via %s", len(cmd.candidates), cmd))
 	if err := c.executeCommand(ctx, disruption, cmd, schedulingResults); err != nil {
 		return false, fmt.Errorf("disrupting candidates, %w", err)
 	}
@@ -272,7 +272,7 @@ func (c *Controller) logAbnormalRuns(ctx context.Context) {
 	defer c.mu.Unlock()
 	for name, runTime := range c.lastRun {
 		if timeSince := c.clock.Since(runTime); timeSince > AbnormalTimeLimit {
-			log.FromContext(ctx).V(1).Info(fmt.Sprintf("abnormal time between runs of %s = %s", name, timeSince))
+			log.FromContext(ctx).Info(fmt.Sprintf("abnormal time between runs of %s = %s", name, timeSince))
 		}
 	}
 }
