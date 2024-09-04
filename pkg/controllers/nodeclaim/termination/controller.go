@@ -113,7 +113,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClaim *v1.NodeClaim) (rec
 	// We can expect ProviderID to be empty when there is a failure while launching the nodeClaim
 	if nodeClaim.Status.ProviderID != "" {
 		isInstanceTerminated, err = termination.EnsureTerminated(ctx, c.kubeClient, nodeClaim, c.cloudProvider)
-		log.FromContext(ctx).Info("[kevin] node claim termination: isinstanceterminated", "nodeClaim", nodeClaim.Name, "err", err)
+		log.FromContext(ctx).Info(fmt.Sprintf("[kevin] node claim termination: [%s] isinstanceterminated %t", nodeClaim.Name, isInstanceTerminated), "err", err)
 		if err != nil {
 			// 404 = the nodeClaim no longer exists
 			if errors.IsNotFound(err) {
