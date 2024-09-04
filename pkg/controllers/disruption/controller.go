@@ -184,7 +184,7 @@ func (c *Controller) disrupt(ctx context.Context, disruption Method) (bool, erro
 	}
 
 	// Attempt to disrupt
-	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] disrupting %d candidates via %s", len(cmd.candidates), cmd))
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [disruption] disrupting %d candidates via %s", len(cmd.candidates), cmd))
 	if err := c.executeCommand(ctx, disruption, cmd, schedulingResults); err != nil {
 		return false, fmt.Errorf("disrupting candidates, %w", err)
 	}
