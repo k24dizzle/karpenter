@@ -91,6 +91,8 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 		return reconcile.Result{}, fmt.Errorf("listing nodeclaims, %w", err)
 	}
 
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer]: get node claims for node %s", node.Name), "nodeClaim", nodeClaims)
+
 	if err := c.deleteAllNodeClaims(ctx, nodeClaims...); err != nil {
 		return reconcile.Result{}, fmt.Errorf("deleting nodeclaims, %w", err)
 	}

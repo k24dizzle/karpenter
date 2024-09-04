@@ -54,6 +54,7 @@ func (d *Drift) Reconcile(ctx context.Context, nodePool *v1.NodePool, nodeClaim 
 		return reconcile.Result{}, nil
 	}
 	driftedReason, err := d.isDrifted(ctx, nodePool, nodeClaim)
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [nodeclaim disruption] nodeClaim %s is drifted (%t) from nodePool %s", nodeClaim.Name, driftedReason, nodePool.Name))
 	if err != nil {
 		return reconcile.Result{}, cloudprovider.IgnoreNodeClaimNotFoundError(fmt.Errorf("getting drift, %w", err))
 	}

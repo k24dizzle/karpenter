@@ -95,6 +95,8 @@ func (c *Controller) finalize(ctx context.Context, nodeClaim *v1.NodeClaim) (rec
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node claim finalizer]: get nodes for node claim %s", nodeClaim.Name), "nodes", nodes)
 	for _, node := range nodes {
 		// If we still get the Node, but it's already marked as terminating, we don't need to call Delete again
 		if node.DeletionTimestamp.IsZero() {
