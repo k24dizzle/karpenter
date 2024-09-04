@@ -142,10 +142,10 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 	}
 	for _, nodeClaim := range nodeClaims {
 		isInstanceTerminated, err := termination.EnsureTerminated(ctx, c.kubeClient, nodeClaim, c.cloudProvider)
-		log.FromContext(ctx).Info("[kevin] node termination: isinstanceterminated", "node", node.Name, "nodeClaim", nodeClaim.Name, "err", err)
 		if err != nil {
 			// 404 = the nodeClaim no longer exists
 			if errors.IsNotFound(err) {
+				log.FromContext(ctx).Info(fmt.Sprint("[kevin] [node finalizer]: nodeclaim no longer exists %t", isInstanceTerminated), "node", node.Name, "nodeClaim", nodeClaim.Name, "err", err, "isInstanceTerminated", isInstanceTerminated)
 				continue
 			}
 			// 409 - The nodeClaim exists, but its status has already been modified
@@ -155,10 +155,11 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 			return reconcile.Result{}, fmt.Errorf("ensuring instance termination, %w", err)
 		}
 		if !isInstanceTerminated {
+			log.FromContext(ctx).Info(fmt.Sprint("[kevin] [node finalizer]: isinstanceterminated %t, queueing back up", isInstanceTerminated), "node", node.Name, "nodeClaim", nodeClaim.Name, "err", err, "isInstanceTerminated", isInstanceTerminated)
 			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 	}
-	log.FromContext(ctx).Info("[kevin] node removing finalizer", "node", node.Name)
+	log.FromContext(ctx).Info("[kevin] [node finalizer]: removing finalizer", "node", node.Name)
 	if err := c.removeFinalizer(ctx, node); err != nil {
 		return reconcile.Result{}, err
 	}
