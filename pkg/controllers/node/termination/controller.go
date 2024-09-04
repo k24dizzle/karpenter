@@ -91,7 +91,7 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 		return reconcile.Result{}, fmt.Errorf("listing nodeclaims, %w", err)
 	}
 
-	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer]: get node claims for node %s", node.Name), "nodeClaim", nodeClaims)
+	// log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer]: get node claims for node %s", node.Name), "nodeClaim", nodeClaims)
 
 	if err := c.deleteAllNodeClaims(ctx, nodeClaims...); err != nil {
 		return reconcile.Result{}, fmt.Errorf("deleting nodeclaims, %w", err)
@@ -124,6 +124,7 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 			}
 		}
 
+		log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer] [%s]: drain not working, queueing back up", node.Name))
 		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 	// In order for Pods associated with PersistentVolumes to smoothly migrate from the terminating Node, we wait
@@ -135,6 +136,7 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 			return reconcile.Result{}, fmt.Errorf("ensuring no volume attachments, %w", err)
 		}
 		if !areVolumesDetached {
+			log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer] [%s]: volumes are not detached, queueing back up", node.Name))
 			return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
 		}
 	}
