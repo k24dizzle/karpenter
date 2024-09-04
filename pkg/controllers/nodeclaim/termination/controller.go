@@ -104,6 +104,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClaim *v1.NodeClaim) (rec
 			}
 		}
 	}
+
 	// We wait until all the nodes associated with this nodeClaim have completed their deletion before triggering the finalization of the nodeClaim
 	if len(nodes) > 0 {
 		return reconcile.Result{}, nil
@@ -112,6 +113,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClaim *v1.NodeClaim) (rec
 	// We can expect ProviderID to be empty when there is a failure while launching the nodeClaim
 	if nodeClaim.Status.ProviderID != "" {
 		isInstanceTerminated, err = termination.EnsureTerminated(ctx, c.kubeClient, nodeClaim, c.cloudProvider)
+		log.FromContext(ctx).Info("[kevin] node claim termination: isinstanceterminated", "nodeClaim", nodeClaim.Name, "err", err)
 		if err != nil {
 			// 404 = the nodeClaim no longer exists
 			if errors.IsNotFound(err) {
@@ -130,6 +132,7 @@ func (c *Controller) finalize(ctx context.Context, nodeClaim *v1.NodeClaim) (rec
 			metrics.NodePoolLabel: nodeClaim.Labels[v1.NodePoolLabelKey],
 		}).Observe(time.Since(nodeClaim.StatusConditions().Get(v1.ConditionTypeInstanceTerminating).LastTransitionTime.Time).Seconds())
 	}
+	log.FromContext(ctx).Info("[kevin] nodeclaim removing finalizer", "nodeclaim", nodeClaim.Name)
 	controllerutil.RemoveFinalizer(nodeClaim, v1.TerminationFinalizer)
 	if !equality.Semantic.DeepEqual(stored, nodeClaim) {
 		// We call Update() here rather than Patch() because patching a list with a JSON merge patch
