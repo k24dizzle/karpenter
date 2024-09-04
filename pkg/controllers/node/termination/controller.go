@@ -192,6 +192,8 @@ func (c *Controller) ensureVolumesDetached(ctx context.Context, node *corev1.Nod
 	if err != nil {
 		return false, err
 	}
+
+	log.FromContext(ctx).Info(fmt.Sprintf("[kevin] [node finalizer] [%s]: volumes are not detached", node.Name, "volumeAttachments", filteredVolumeAttachments))
 	return len(filteredVolumeAttachments) == 0, nil
 }
 
