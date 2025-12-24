@@ -111,7 +111,7 @@ func NewTopologyGroup(
 	domains := map[string]int32{}
 	emptyDomains := sets.New[string]()
 	fmt.Printf("[DEBUG-TSC-GROUP]   Filtering domains from domainGroup (total available: %d)\n", len(domainGroup))
-	domainGroup.ForEachDomain(pod, nodeFilter.TaintPolicy, func(domain string) {
+	domainGroup.ForEachDomain(pod, nodeFilter, func(domain string) {
 		domains[domain] = 0
 		emptyDomains.Insert(domain)
 	})
