@@ -17,11 +17,22 @@ limitations under the License.
 package scheduling
 
 import (
+	"fmt"
+
 	"github.com/awslabs/operatorpkg/option"
 	corev1 "k8s.io/api/core/v1"
 
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 )
+
+// debugLogEnabled controls whether debug logging is enabled for TSC troubleshooting
+var debugLogEnabled = true
+
+func debugLog(format string, args ...interface{}) {
+	if debugLogEnabled {
+		fmt.Printf("[DEBUG-TSC] "+format+"\n", args...)
+	}
+}
 
 // TopologyNodeFilter is used to determine if a given actual node or scheduling node matches the pod's node selectors
 // and required node affinity terms.  This is used with topology spread constraints to determine if the node should be
@@ -36,9 +47,15 @@ type TopologyNodeFilter struct {
 }
 
 func MakeTopologyNodeFilter(p *corev1.Pod, taintPolicy corev1.NodeInclusionPolicy, affinityPolicy corev1.NodeInclusionPolicy) TopologyNodeFilter {
+	debugLog("MakeTopologyNodeFilter called for pod %s/%s", p.Namespace, p.Name)
+	debugLog("  TaintPolicy: %s, AffinityPolicy: %s", taintPolicy, affinityPolicy)
+
 	nodeSelectorRequirements := scheduling.NewLabelRequirements(p.Spec.NodeSelector)
+	debugLog("  NodeSelector requirements: %v", nodeSelectorRequirements)
+
 	// if we only have a label selector, that's the only requirement that must match
 	if p.Spec.Affinity == nil || p.Spec.Affinity.NodeAffinity == nil || p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		debugLog("  No NodeAffinity.Required found, using only NodeSelector")
 		return TopologyNodeFilter{
 			Requirements:   []scheduling.Requirements{nodeSelectorRequirements},
 			TaintPolicy:    taintPolicy,
@@ -54,13 +71,21 @@ func MakeTopologyNodeFilter(p *corev1.Pod, taintPolicy corev1.NodeInclusionPolic
 		AffinityPolicy: affinityPolicy,
 		Tolerations:    p.Spec.Tolerations,
 	}
-	for _, term := range p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+
+	debugLog("  NodeAffinity.Required has %d terms", len(p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms))
+
+	for i, term := range p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+		debugLog("  Processing term %d with %d MatchExpressions", i, len(term.MatchExpressions))
+		for j, expr := range term.MatchExpressions {
+			debugLog("    MatchExpression[%d]: key=%s, op=%s, values=%v", j, expr.Key, expr.Operator, expr.Values)
+		}
 		requirements := scheduling.NewRequirements()
 		requirements.Add(nodeSelectorRequirements.Values()...)
 		requirements.Add(scheduling.NewNodeSelectorRequirements(term.MatchExpressions...).Values()...)
 		filter.Requirements = append(filter.Requirements, requirements)
 	}
 
+	debugLog("  Final filter has %d requirement sets", len(filter.Requirements))
 	return filter
 }
 
@@ -76,7 +101,11 @@ func (t TopologyNodeFilter) Matches(taints []corev1.Taint, requirements scheduli
 			matchesTaints = false
 		}
 	}
-	return matchesAffinity && matchesTaints
+	result := matchesAffinity && matchesTaints
+	if !result {
+		debugLog("TopologyNodeFilter.Matches: REJECTED - matchesAffinity=%v, matchesTaints=%v", matchesAffinity, matchesTaints)
+	}
+	return result
 }
 
 // MatchesRequirements returns true if the TopologyNodeFilter doesn't prohibit a node with the requirements from

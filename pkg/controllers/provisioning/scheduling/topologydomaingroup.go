@@ -17,10 +17,18 @@ limitations under the License.
 package scheduling
 
 import (
+	"fmt"
+
 	v1 "k8s.io/api/core/v1"
 
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 )
+
+func domainDebugLog(format string, args ...interface{}) {
+	if debugLogEnabled {
+		fmt.Printf("[DEBUG-TSC-DOMAIN] "+format+"\n", args...)
+	}
+}
 
 // TopologyDomainGroup tracks the domains for a single topology. Additionally, it tracks the taints associated with
 // each of these domains. This enables us to determine which domains should be considered by a pod if its
@@ -54,19 +62,35 @@ func (t TopologyDomainGroup) Insert(domain string, taints ...v1.Taint) {
 // ForEachDomain calls f on each domain tracked by the topology group. If the taintHonorPolicy is honor, only domains
 // available on nodes tolerated by the provided pod will be included.
 func (t TopologyDomainGroup) ForEachDomain(pod *v1.Pod, taintHonorPolicy v1.NodeInclusionPolicy, f func(domain string)) {
+	domainDebugLog("ForEachDomain called for pod %s/%s, total domains: %d, taintPolicy: %s",
+		pod.Namespace, pod.Name, len(t), taintHonorPolicy)
+
+	includedDomains := []string{}
+	excludedDomains := []string{}
+
 	for domain, taintGroups := range t {
 		if taintHonorPolicy == v1.NodeInclusionPolicyIgnore {
+			includedDomains = append(includedDomains, domain)
 			f(domain)
 			continue
 		}
 		// Since the taint policy is honor, we should only call f if there is a set of taints associated with the domain which
 		// the pod tolerates.
 		// Perf Note: We could consider hashing the pod's tolerations and using that to look up a set of tolerated domains.
+		included := false
 		for _, taints := range taintGroups {
 			if err := scheduling.Taints(taints).ToleratesPod(pod); err == nil {
+				includedDomains = append(includedDomains, domain)
 				f(domain)
+				included = true
 				break
 			}
 		}
+		if !included {
+			excludedDomains = append(excludedDomains, domain)
+		}
 	}
+
+	domainDebugLog("  INCLUDED domains (%d): %v", len(includedDomains), includedDomains)
+	domainDebugLog("  EXCLUDED domains (%d): %v", len(excludedDomains), excludedDomains)
 }

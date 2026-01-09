@@ -58,8 +58,12 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 		requirements = append(requirements, req...)
 	}
 	if len(requirements) == 0 {
+		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info("[DEBUG-TSC] No volume requirements found for pod")
 		return nil
 	}
+	// DEBUG: Log the volume requirements that will be injected
+	log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info(fmt.Sprintf("[DEBUG-TSC] Volume requirements to inject: %v", requirements))
+
 	if pod.Spec.Affinity == nil {
 		pod.Spec.Affinity = &v1.Affinity{}
 	}
@@ -83,6 +87,12 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 	log.FromContext(ctx).
 		WithValues("Pod", klog.KObj(pod)).
 		V(1).Info(fmt.Sprintf("adding requirements derived from pod volumes, %s", requirements))
+	// DEBUG: Log the pod's final NodeAffinity after injection
+	if pod.Spec.Affinity != nil && pod.Spec.Affinity.NodeAffinity != nil &&
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info(fmt.Sprintf("[DEBUG-TSC] Pod NodeAffinity AFTER volume injection: %+v",
+			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms))
+	}
 	return nil
 }
 

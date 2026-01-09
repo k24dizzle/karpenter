@@ -84,6 +84,9 @@ func NewTopologyGroup(
 	affinityPolicy *corev1.NodeInclusionPolicy,
 	domainGroup TopologyDomainGroup,
 ) *TopologyGroup {
+	fmt.Printf("[DEBUG-TSC-GROUP] NewTopologyGroup called: type=%s, key=%s, pod=%s/%s, maxSkew=%d\n",
+		topologyType, topologyKey, pod.Namespace, pod.Name, maxSkew)
+
 	// the nil *TopologyNodeFilter always passes which is what we need for affinity/anti-affinity
 	var nodeFilter TopologyNodeFilter
 	if topologyType == TopologyTypeSpread {
@@ -95,6 +98,8 @@ func NewTopologyGroup(
 		if affinityPolicy != nil {
 			nodeAffinityPolicy = *affinityPolicy
 		}
+		fmt.Printf("[DEBUG-TSC-GROUP]   Creating TopologyNodeFilter with taintPolicy=%s, affinityPolicy=%s\n",
+			nodeTaintsPolicy, nodeAffinityPolicy)
 		nodeFilter = MakeTopologyNodeFilter(pod, nodeTaintsPolicy, nodeAffinityPolicy)
 	}
 
@@ -105,10 +110,16 @@ func NewTopologyGroup(
 
 	domains := map[string]int32{}
 	emptyDomains := sets.New[string]()
+	fmt.Printf("[DEBUG-TSC-GROUP]   Filtering domains from domainGroup (total available: %d)\n", len(domainGroup))
 	domainGroup.ForEachDomain(pod, nodeFilter.TaintPolicy, func(domain string) {
 		domains[domain] = 0
 		emptyDomains.Insert(domain)
 	})
+
+	fmt.Printf("[DEBUG-TSC-GROUP]   Final domains for TopologyGroup: %v\n", lo.Keys(domains))
+	if len(domains) == 0 {
+		fmt.Printf("[DEBUG-TSC-GROUP]   WARNING: No domains found! TSC calculations will likely fail.\n")
+	}
 
 	return &TopologyGroup{
 		Type:         topologyType,
@@ -224,9 +235,16 @@ func hashSelector(selector *metav1.LabelSelector) uint64 {
 // If there are no eligible domains, we return a `DoesNotExist` requirement, implying that we could not satisfy the topologySpread requirement.
 // nolint:gocyclo
 func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, nodeDomains *scheduling.Requirement) *scheduling.Requirement {
+	fmt.Printf("[DEBUG-TSC-SPREAD] nextDomainTopologySpread called for pod %s/%s, topologyKey=%s\n",
+		pod.Namespace, pod.Name, t.Key)
+	fmt.Printf("[DEBUG-TSC-SPREAD]   Known domains: %v\n", t.domains)
+	fmt.Printf("[DEBUG-TSC-SPREAD]   podDomains: %v\n", podDomains)
+	fmt.Printf("[DEBUG-TSC-SPREAD]   nodeDomains: %v\n", nodeDomains)
+
 	// min count is calculated across all domains
 	min := t.domainMinCount(podDomains)
 	selfSelecting := t.selects(pod)
+	fmt.Printf("[DEBUG-TSC-SPREAD]   minCount=%d, selfSelecting=%v, maxSkew=%d\n", min, selfSelecting, t.maxSkew)
 
 	minDomain := ""
 	minCount := int32(math.MaxInt32)
@@ -281,8 +299,11 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 	}
 	if minDomain == "" {
 		// avoids an error message about 'zone in [""]', preferring 'zone in []'
+		fmt.Printf("[DEBUG-TSC-SPREAD]   RESULT: No valid domain found! Returning DoesNotExist requirement\n")
+		fmt.Printf("[DEBUG-TSC-SPREAD]   This is the BUG indicator - check if domains were filtered incorrectly\n")
 		return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpDoesNotExist)
 	}
+	fmt.Printf("[DEBUG-TSC-SPREAD]   RESULT: Selected domain '%s' with count %d\n", minDomain, minCount)
 	return scheduling.NewRequirement(t.Key, corev1.NodeSelectorOpIn, minDomain)
 }
 
