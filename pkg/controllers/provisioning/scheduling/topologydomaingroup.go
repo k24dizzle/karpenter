@@ -108,13 +108,12 @@ func (d *topologyDomainAttributes) matches(filter TopologyNodeFilter, pod *v1.Po
 	}
 
 	if filter.AffinityPolicy == v1.NodeInclusionPolicyHonor {
-		for i, reqs := range d.requirements {
+		for _, reqs := range d.requirements {
 			if filter.matchesRequirements(reqs) {
 				return true
 			}
-			domainDebugLog("    Domain requirements[%d] did not match filter", i)
 		}
-		domainDebugLog("    Domain rejected: no requirements matched NodeAffinity filter")
+		domainDebugLog("    Domain rejected: no requirements matched NodeAffinity filter: %d", len(d.requirements))
 		return false
 	}
 
