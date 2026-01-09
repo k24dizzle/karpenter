@@ -112,29 +112,42 @@ func NewNodeClaim(
 // based on the taints/tolerations, host port compatibility,
 // requirements, resources, reserved capacity reservations, and topology requirements
 func (n *NodeClaim) CanAdd(ctx context.Context, pod *corev1.Pod, podData *PodData, relaxMinValues bool) (updatedRequirements scheduling.Requirements, updatedInstanceTypes []*cloudprovider.InstanceType, offeringsToReserve []*cloudprovider.Offering, err error) {
+	fmt.Printf("[DEBUG-NODECLAIM] CanAdd called for pod %s/%s\n", pod.Namespace, pod.Name)
+
 	// Check Taints
 	if err := scheduling.Taints(n.Spec.Taints).ToleratesPod(pod); err != nil {
+		fmt.Printf("[DEBUG-NODECLAIM]   ✗ Taint check failed: %v\n", err)
 		return nil, nil, nil, err
 	}
+	fmt.Printf("[DEBUG-NODECLAIM]   ✓ Taint check passed\n")
 
 	// exposed host ports on the node
 	hostPorts := scheduling.GetHostPorts(pod)
 	if err := n.hostPortUsage.Conflicts(pod, hostPorts); err != nil {
+		fmt.Printf("[DEBUG-NODECLAIM]   ✗ Host port check failed: %v\n", err)
 		return nil, nil, nil, fmt.Errorf("checking host port usage, %w", err)
 	}
+	fmt.Printf("[DEBUG-NODECLAIM]   ✓ Host port check passed\n")
+
 	nodeClaimRequirements := scheduling.NewRequirements(n.Requirements.Values()...)
 
 	// Check NodeClaim Affinity Requirements
 	if err := nodeClaimRequirements.Compatible(podData.Requirements, scheduling.AllowUndefinedWellKnownLabels); err != nil {
+		fmt.Printf("[DEBUG-NODECLAIM]   ✗ Affinity requirements check failed: %v\n", err)
 		return nil, nil, nil, fmt.Errorf("incompatible requirements, %w", err)
 	}
+	fmt.Printf("[DEBUG-NODECLAIM]   ✓ Affinity requirements check passed\n")
 	nodeClaimRequirements.Add(podData.Requirements.Values()...)
 
 	// Check Topology Requirements
+	fmt.Printf("[DEBUG-NODECLAIM]   Checking Topology Requirements (TSC)...\n")
 	topologyRequirements, err := n.topology.AddRequirements(pod, n.Spec.Taints, podData.StrictRequirements, nodeClaimRequirements, scheduling.AllowUndefinedWellKnownLabels)
 	if err != nil {
+		fmt.Printf("[DEBUG-NODECLAIM]   ✗ TOPOLOGY CHECK FAILED: %v\n", err)
+		fmt.Printf("[DEBUG-NODECLAIM]   ^^^ THIS IS THE TSC BUG - NodeClaim cannot be created!\n")
 		return nil, nil, nil, err
 	}
+	fmt.Printf("[DEBUG-NODECLAIM]   ✓ Topology check passed\n")
 	if err = nodeClaimRequirements.Compatible(topologyRequirements, scheduling.AllowUndefinedWellKnownLabels); err != nil {
 		return nil, nil, nil, err
 	}

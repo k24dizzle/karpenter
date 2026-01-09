@@ -326,6 +326,7 @@ func (t *Topology) updateInverseAntiAffinity(ctx context.Context, pod *corev1.Po
 //
 //nolint:gocyclo
 func (t *Topology) countDomains(ctx context.Context, tg *TopologyGroup) error {
+	fmt.Printf("[DEBUG-TSC-COUNT] countDomains called for TopologyGroup: type=%s, key=%s\n", tg.Type, tg.Key)
 	podList := &corev1.PodList{}
 
 	// collect the pods from all the specified namespaces (don't see a way to query multiple namespaces
@@ -368,12 +369,15 @@ func (t *Topology) countDomains(ctx context.Context, tg *TopologyGroup) error {
 	var previousNode *corev1.Node
 	var previousNodeRequirements scheduling.Requirements
 
+	fmt.Printf("[DEBUG-TSC-COUNT] Processing %d pods for counting\n", len(pods))
 	for i, p := range pods {
 		if IgnoredForTopology(&pods[i]) {
+			fmt.Printf("[DEBUG-TSC-COUNT]   Pod %s/%s: SKIPPED (IgnoredForTopology)\n", p.Namespace, p.Name)
 			continue
 		}
 		// pod is excluded for counting purposes
 		if t.excludedPods.Has(string(p.UID)) {
+			fmt.Printf("[DEBUG-TSC-COUNT]   Pod %s/%s: SKIPPED (excludedPods)\n", p.Namespace, p.Name)
 			continue
 		}
 		var node *corev1.Node
@@ -412,16 +416,25 @@ func (t *Topology) countDomains(ctx context.Context, tg *TopologyGroup) error {
 			ok = true
 		}
 		if !ok {
+			fmt.Printf("[DEBUG-TSC-COUNT]   Pod %s/%s on node %s: SKIPPED (no domain label for key=%s)\n",
+				p.Namespace, p.Name, node.Name, tg.Key)
 			continue // Don't include pods if node doesn't contain domain https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/#conventions
 		}
 
 		// nodes may or may not be considered for counting purposes for topology spread constraints depending on if they
 		// are selected by the pod's node selectors and required node affinities.  If these are unset, the node always counts.
 		if !tg.nodeFilter.Matches(node.Spec.Taints, nodeRequirements) {
+			fmt.Printf("[DEBUG-TSC-COUNT]   Pod %s/%s on node %s (domain=%s): FILTERED OUT by nodeFilter!\n",
+				p.Namespace, p.Name, node.Name, domain)
+			fmt.Printf("[DEBUG-TSC-COUNT]     Node zone label: %s\n", node.Labels["topology.kubernetes.io/zone"])
+			fmt.Printf("[DEBUG-TSC-COUNT]     Filter requirements: %v\n", tg.nodeFilter.Requirements)
 			continue
 		}
+		fmt.Printf("[DEBUG-TSC-COUNT]   Pod %s/%s on node %s (domain=%s): COUNTED\n",
+			p.Namespace, p.Name, node.Name, domain)
 		tg.Record(domain)
 	}
+	fmt.Printf("[DEBUG-TSC-COUNT] Final domain counts for TopologyGroup (key=%s): %v\n", tg.Key, tg.domains)
 	return nil
 }
 

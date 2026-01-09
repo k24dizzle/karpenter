@@ -49,18 +49,35 @@ type VolumeTopology struct {
 }
 
 func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
+	fmt.Printf("[DEBUG-TSC-INJECT] VolumeTopology.Inject called for pod %s/%s\n", pod.Namespace, pod.Name)
+	fmt.Printf("[DEBUG-TSC-INJECT]   Pod has %d volumes\n", len(pod.Spec.Volumes))
+
+	// Log original NodeAffinity BEFORE injection
+	if pod.Spec.Affinity != nil && pod.Spec.Affinity.NodeAffinity != nil &&
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		fmt.Printf("[DEBUG-TSC-INJECT]   BEFORE injection - NodeAffinity.Required: %+v\n",
+			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
+	} else {
+		fmt.Printf("[DEBUG-TSC-INJECT]   BEFORE injection - No NodeAffinity.Required\n")
+	}
+
 	var requirements []v1.NodeSelectorRequirement
 	for _, volume := range pod.Spec.Volumes {
 		req, err := v.getRequirements(ctx, pod, volume)
 		if err != nil {
 			return err
 		}
+		if len(req) > 0 {
+			fmt.Printf("[DEBUG-TSC-INJECT]   Volume '%s' contributes requirements: %v\n", volume.Name, req)
+		}
 		requirements = append(requirements, req...)
 	}
 	if len(requirements) == 0 {
+		fmt.Printf("[DEBUG-TSC-INJECT]   No volume requirements found - skipping injection\n")
 		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info("[DEBUG-TSC] No volume requirements found for pod")
 		return nil
 	}
+	fmt.Printf("[DEBUG-TSC-INJECT]   TOTAL requirements to inject: %v\n", requirements)
 	// DEBUG: Log the volume requirements that will be injected
 	log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info(fmt.Sprintf("[DEBUG-TSC] Volume requirements to inject: %v", requirements))
 
@@ -88,11 +105,9 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 		WithValues("Pod", klog.KObj(pod)).
 		V(1).Info(fmt.Sprintf("adding requirements derived from pod volumes, %s", requirements))
 	// DEBUG: Log the pod's final NodeAffinity after injection
-	if pod.Spec.Affinity != nil && pod.Spec.Affinity.NodeAffinity != nil &&
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info(fmt.Sprintf("[DEBUG-TSC] Pod NodeAffinity AFTER volume injection: %+v",
-			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms))
-	}
+	fmt.Printf("[DEBUG-TSC-INJECT]   AFTER injection - NodeAffinity.Required: %+v\n",
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
+	fmt.Printf("[DEBUG-TSC-INJECT]   ^^^ THIS IS THE BUG SOURCE - volume zone is now in pod's NodeAffinity!\n")
 	return nil
 }
 
@@ -105,6 +120,7 @@ func (v *VolumeTopology) getRequirements(ctx context.Context, pod *v1.Pod, volum
 	if pvc == nil {
 		return nil, nil
 	}
+	fmt.Printf("[DEBUG-TSC-INJECT]     Found PVC: %s/%s, bound to PV: %s\n", pvc.Namespace, pvc.Name, pvc.Spec.VolumeName)
 
 	// Persistent Volume Requirements
 	if pvc.Spec.VolumeName != "" {
@@ -141,20 +157,24 @@ func (v *VolumeTopology) getStorageClassRequirements(ctx context.Context, storag
 }
 
 func (v *VolumeTopology) getPersistentVolumeRequirements(ctx context.Context, pod *v1.Pod, volumeName string) ([]v1.NodeSelectorRequirement, error) {
+	fmt.Printf("[DEBUG-TSC-INJECT]     getPersistentVolumeRequirements for PV: %s\n", volumeName)
 	pv := &v1.PersistentVolume{}
 	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: volumeName, Namespace: pod.Namespace}, pv); err != nil {
 		return nil, serrors.Wrap(fmt.Errorf("getting persistent volume, %w", err), "PersistentVolume", klog.KRef("", volumeName))
 	}
 	if pv.Spec.NodeAffinity == nil {
+		fmt.Printf("[DEBUG-TSC-INJECT]       PV has no NodeAffinity\n")
 		return nil, nil
 	}
 	if pv.Spec.NodeAffinity.Required == nil {
+		fmt.Printf("[DEBUG-TSC-INJECT]       PV NodeAffinity has no Required\n")
 		return nil, nil
 	}
 	var requirements []v1.NodeSelectorRequirement
 	if len(pv.Spec.NodeAffinity.Required.NodeSelectorTerms) > 0 {
 		// Terms are ORed, only use the first term
 		requirements = pv.Spec.NodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions
+		fmt.Printf("[DEBUG-TSC-INJECT]       PV NodeAffinity requirements: %v\n", requirements)
 		// If we are using a Local volume or a HostPath volume, then we should ignore the Hostname affinity
 		// on it because re-scheduling this pod to a new node means not using the same Hostname affinity that we currently have
 		if pv.Spec.Local != nil || pv.Spec.HostPath != nil {

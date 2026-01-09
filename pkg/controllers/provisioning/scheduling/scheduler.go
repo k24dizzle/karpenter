@@ -486,6 +486,8 @@ func (s *Scheduler) updateCachedPodData(p *corev1.Pod) {
 }
 
 func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
+	fmt.Printf("[DEBUG-SCHED] add() called for pod %s/%s\n", pod.Namespace, pod.Name)
+
 	// Check if pod has DRA requirements - if so, return DRA error when IgnoreDRARequests is enabled
 	if s.cachedPodData[pod.UID].HasResourceClaimRequests && karpopts.FromContext(ctx).IgnoreDRARequests {
 		return NewDRAError(fmt.Errorf("pod has Dynamic Resource Allocation requirements that are not yet supported by Karpenter"))
@@ -493,22 +495,33 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 
 	// first try to schedule against an in-flight real node
 	if err := s.addToExistingNode(ctx, pod); err == nil {
+		fmt.Printf("[DEBUG-SCHED]   ✓ Pod can fit on EXISTING node\n")
 		return nil
+	} else {
+		fmt.Printf("[DEBUG-SCHED]   ✗ Cannot fit on existing nodes: %v\n", err)
 	}
 	// Consider using https://pkg.go.dev/container/heap
 	sort.Slice(s.newNodeClaims, func(a, b int) bool { return len(s.newNodeClaims[a].Pods) < len(s.newNodeClaims[b].Pods) })
 
 	// Pick existing node that we are about to create
 	if err := s.addToInflightNode(ctx, pod); err == nil {
+		fmt.Printf("[DEBUG-SCHED]   ✓ Pod can fit on INFLIGHT node (being created)\n")
 		return nil
+	} else {
+		fmt.Printf("[DEBUG-SCHED]   ✗ Cannot fit on inflight nodes: %v\n", err)
 	}
 	if len(s.nodeClaimTemplates) == 0 {
+		fmt.Printf("[DEBUG-SCHED]   ✗ No nodeClaimTemplates available!\n")
 		return fmt.Errorf("nodepool requirements filtered out all available instance types")
 	}
+	fmt.Printf("[DEBUG-SCHED]   Trying to create NEW NodeClaim (have %d templates)\n", len(s.nodeClaimTemplates))
 	err := s.addToNewNodeClaim(ctx, pod)
 	if err == nil {
+		fmt.Printf("[DEBUG-SCHED]   ✓ Created NEW NodeClaim for pod\n")
 		return nil
 	}
+	fmt.Printf("[DEBUG-SCHED]   ✗ FAILED to create NodeClaim: %v\n", err)
+	fmt.Printf("[DEBUG-SCHED]   ^^^ THIS IS WHY THE POD IS STUCK!\n")
 	return err
 }
 
@@ -585,6 +598,7 @@ func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) erro
 
 //nolint:gocyclo
 func (s *Scheduler) addToNewNodeClaim(ctx context.Context, pod *corev1.Pod) error {
+	fmt.Printf("[DEBUG-SCHED-NEW] addToNewNodeClaim for pod %s/%s\n", pod.Namespace, pod.Name)
 	idx := math.MaxInt
 	var mu sync.Mutex
 
@@ -595,6 +609,7 @@ func (s *Scheduler) addToNewNodeClaim(ctx context.Context, pod *corev1.Pod) erro
 
 	errs := make([]error, len(s.nodeClaimTemplates))
 	parallelizeUntil(s.numConcurrentReconciles, len(s.nodeClaimTemplates), func(i int) bool {
+		fmt.Printf("[DEBUG-SCHED-NEW]   Trying NodeClaimTemplate[%d]: NodePool=%s\n", i, s.nodeClaimTemplates[i].NodePoolName)
 		its := s.nodeClaimTemplates[i].InstanceTypeOptions
 		// if limits have been applied to the nodepool, ensure we filter instance types to avoid violating those limits
 		if remaining, ok := s.remainingResources[s.nodeClaimTemplates[i].NodePoolName]; ok {
@@ -615,6 +630,7 @@ func (s *Scheduler) addToNewNodeClaim(ctx context.Context, pod *corev1.Pod) erro
 		nodeClaim := NewNodeClaim(s.nodeClaimTemplates[i], s.topology, s.daemonOverhead[s.nodeClaimTemplates[i]], s.daemonHostPortUsage[s.nodeClaimTemplates[i]], its, s.reservationManager, s.reservedOfferingMode)
 		r, its, ofs, err := nodeClaim.CanAdd(ctx, pod, s.cachedPodData[pod.UID], s.minValuesPolicy == karpopts.MinValuesPolicyBestEffort)
 		if err != nil {
+			fmt.Printf("[DEBUG-SCHED-NEW]     ✗ NodeClaimTemplate[%d] REJECTED: %v\n", i, err)
 			errs[i] = err
 
 			// If the pod is compatible with a NodePool with reserved offerings available, we shouldn't fall back to a NodePool
