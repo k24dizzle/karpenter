@@ -238,24 +238,40 @@ func (t *Topology) Record(p *corev1.Pod, taints []corev1.Taint, requirements sch
 // placing the pod on.  It returns these newly tightened requirements, or an error in the case of a set of requirements that
 // cannot be satisfied.
 func (t *Topology) AddRequirements(p *corev1.Pod, taints []corev1.Taint, podRequirements, nodeRequirements scheduling.Requirements, compatabilityOptions ...option.Function[scheduling.CompatibilityOptions]) (scheduling.Requirements, error) {
+	fmt.Printf("[DEBUG-TSC-ADDREQ] AddRequirements called for pod %s/%s\n", p.Namespace, p.Name)
+
+	// Check if this pod had volume requirements injected
+	if injectedReqs := t.injectedVolumeReqs[p.UID]; len(injectedReqs) > 0 {
+		fmt.Printf("[DEBUG-TSC-ADDREQ]   ⚠️ This pod has injected volume requirements: %v\n", injectedReqs)
+		fmt.Printf("[DEBUG-TSC-ADDREQ]   ⚠️ These are included in podRequirements and will restrict podDomains!\n")
+	}
+
 	requirements := scheduling.NewRequirements(nodeRequirements.Values()...)
 	for _, topology := range t.getMatchingTopologies(p, taints, nodeRequirements, compatabilityOptions...) {
 		podDomains := scheduling.NewRequirement(topology.Key, corev1.NodeSelectorOpExists)
 		if podRequirements.Has(topology.Key) {
 			podDomains = podRequirements.Get(topology.Key)
+			fmt.Printf("[DEBUG-TSC-ADDREQ]   Key '%s': podDomains from podRequirements = %v\n", topology.Key, podDomains)
+			fmt.Printf("[DEBUG-TSC-ADDREQ]   ⚠️ If this is restricted (e.g., single zone), minDomains check may fail!\n")
+		} else {
+			fmt.Printf("[DEBUG-TSC-ADDREQ]   Key '%s': podDomains = Exists (no constraint in podRequirements)\n", topology.Key)
 		}
 		nodeDomains := scheduling.NewRequirement(topology.Key, corev1.NodeSelectorOpExists)
 		if nodeRequirements.Has(topology.Key) {
 			nodeDomains = nodeRequirements.Get(topology.Key)
 		}
+		fmt.Printf("[DEBUG-TSC-ADDREQ]   Key '%s': nodeDomains = %v\n", topology.Key, nodeDomains)
+
 		domains := topology.Get(p, podDomains, nodeDomains)
 		if domains.Len() == 0 {
+			fmt.Printf("[DEBUG-TSC-ADDREQ]   ✗ No valid domains found for key '%s'!\n", topology.Key)
 			return nil, topologyError{
 				topology:    topology,
 				podDomains:  podDomains,
 				nodeDomains: nodeDomains,
 			}
 		}
+		fmt.Printf("[DEBUG-TSC-ADDREQ]   ✓ Selected domains for key '%s': %v\n", topology.Key, domains)
 		requirements.Add(domains)
 	}
 	return requirements, nil

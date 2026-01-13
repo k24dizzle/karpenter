@@ -310,8 +310,18 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 }
 
 func (t *TopologyGroup) domainMinCount(domains *scheduling.Requirement) int32 {
+	fmt.Printf("[DEBUG-TSC-MINCOUNT] domainMinCount called for topologyKey=%s\n", t.Key)
+	fmt.Printf("[DEBUG-TSC-MINCOUNT]   podDomains (input): %v\n", domains)
+	fmt.Printf("[DEBUG-TSC-MINCOUNT]   t.domains (all known): %v\n", t.domains)
+	if t.minDomains != nil {
+		fmt.Printf("[DEBUG-TSC-MINCOUNT]   minDomains configured: %d\n", *t.minDomains)
+	} else {
+		fmt.Printf("[DEBUG-TSC-MINCOUNT]   minDomains: not set\n")
+	}
+
 	// hostname based topologies always have a min pod count of zero since we can create one
 	if t.Key == corev1.LabelHostname {
+		fmt.Printf("[DEBUG-TSC-MINCOUNT]   Result: 0 (hostname topology always returns 0)\n")
 		return 0
 	}
 
@@ -321,14 +331,26 @@ func (t *TopologyGroup) domainMinCount(domains *scheduling.Requirement) int32 {
 	for domain, count := range t.domains {
 		if domains.Has(domain) {
 			numPodSupportedDomains++
+			fmt.Printf("[DEBUG-TSC-MINCOUNT]   Domain '%s' (count=%d): INCLUDED in podDomains\n", domain, count)
 			if count < min {
 				min = count
 			}
+		} else {
+			fmt.Printf("[DEBUG-TSC-MINCOUNT]   Domain '%s' (count=%d): EXCLUDED from podDomains\n", domain, count)
 		}
 	}
+
+	fmt.Printf("[DEBUG-TSC-MINCOUNT]   numPodSupportedDomains: %d\n", numPodSupportedDomains)
+	fmt.Printf("[DEBUG-TSC-MINCOUNT]   min count from supported domains: %d\n", min)
+
 	if t.minDomains != nil && numPodSupportedDomains < *t.minDomains {
+		fmt.Printf("[DEBUG-TSC-MINCOUNT]   ⚠️ BUG TRIGGER: numPodSupportedDomains(%d) < minDomains(%d), forcing min=0!\n",
+			numPodSupportedDomains, *t.minDomains)
+		fmt.Printf("[DEBUG-TSC-MINCOUNT]   This happens because podDomains is restricted by volume injection!\n")
 		min = 0
 	}
+
+	fmt.Printf("[DEBUG-TSC-MINCOUNT]   Final min: %d\n", min)
 	return min
 }
 
