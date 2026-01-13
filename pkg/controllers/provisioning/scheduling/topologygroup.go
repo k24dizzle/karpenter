@@ -273,12 +273,20 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 	if nodeDomains.Operator() == corev1.NodeSelectorOpIn {
 		for _, domain := range nodeDomains.Values() {
 			if count, ok := t.domains[domain]; ok {
+				originalCount := count
 				if selfSelecting {
 					count++
 				}
-				if count-min <= t.maxSkew && count < minCount {
+				skew := count - min
+				passes := skew <= t.maxSkew
+				fmt.Printf("[DEBUG-TSC-SKEW]   Domain '%s': originalCount=%d, +self=%d, count=%d, min=%d, skew=%d, maxSkew=%d, passes=%v\n",
+					domain, originalCount, lo.Ternary(selfSelecting, int32(1), int32(0)), count, min, skew, t.maxSkew, passes)
+				if passes && count < minCount {
 					minDomain = domain
 					minCount = count
+					fmt.Printf("[DEBUG-TSC-SKEW]   → Domain '%s' is currently best candidate\n", domain)
+				} else if !passes {
+					fmt.Printf("[DEBUG-TSC-SKEW]   → Domain '%s' REJECTED: skew(%d) > maxSkew(%d)\n", domain, skew, t.maxSkew)
 				}
 			}
 		}
@@ -288,13 +296,21 @@ func (t *TopologyGroup) nextDomainTopologySpread(pod *corev1.Pod, podDomains, no
 			if nodeDomains.Has(domain) {
 				// comment from kube-scheduler regarding the viable choices to schedule to based on skew is:
 				// 'existing matching num' + 'if self-match (1 or 0)' - 'global min matching num' <= 'maxSkew'
-				count := t.domains[domain]
+				originalCount := t.domains[domain]
+				count := originalCount
 				if selfSelecting {
 					count++
 				}
-				if count-min <= t.maxSkew && count < minCount {
+				skew := count - min
+				passes := skew <= t.maxSkew
+				fmt.Printf("[DEBUG-TSC-SKEW]   Domain '%s': originalCount=%d, +self=%d, count=%d, min=%d, skew=%d, maxSkew=%d, passes=%v\n",
+					domain, originalCount, lo.Ternary(selfSelecting, int32(1), int32(0)), count, min, skew, t.maxSkew, passes)
+				if passes && count < minCount {
 					minDomain = domain
 					minCount = count
+					fmt.Printf("[DEBUG-TSC-SKEW]   → Domain '%s' is currently best candidate\n", domain)
+				} else if !passes {
+					fmt.Printf("[DEBUG-TSC-SKEW]   → Domain '%s' REJECTED: skew(%d) > maxSkew(%d)\n", domain, skew, t.maxSkew)
 				}
 			}
 		}
