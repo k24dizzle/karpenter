@@ -46,16 +46,28 @@ type TopologyNodeFilter struct {
 	Tolerations    []corev1.Toleration
 }
 
-func MakeTopologyNodeFilter(p *corev1.Pod, taintPolicy corev1.NodeInclusionPolicy, affinityPolicy corev1.NodeInclusionPolicy) TopologyNodeFilter {
-	debugLog("MakeTopologyNodeFilter called for pod %s/%s", p.Namespace, p.Name)
+// MakeTopologyNodeFilter creates a filter for TSC counting.
+//
+// injectedVolumeReqs: requirements that were injected for volume topology. Since injection
+// appends requirements to the END of each term, we "undo" by truncating each term.
+// This ensures TSC counting uses the pod's ORIGINAL affinity (matching K8s scheduler).
+func MakeTopologyNodeFilter(p *corev1.Pod, taintPolicy corev1.NodeInclusionPolicy, affinityPolicy corev1.NodeInclusionPolicy, injectedVolumeReqs []corev1.NodeSelectorRequirement) TopologyNodeFilter {
+	debugLog("=== MakeTopologyNodeFilter START for pod %s/%s ===", p.Namespace, p.Name)
 	debugLog("  TaintPolicy: %s, AffinityPolicy: %s", taintPolicy, affinityPolicy)
+	debugLog("  injectedVolumeReqs count: %d", len(injectedVolumeReqs))
+
+	// Log the injected requirements for debugging
+	for i, req := range injectedVolumeReqs {
+		debugLog("  injectedVolumeReqs[%d]: key=%s, op=%s, values=%v", i, req.Key, req.Operator, req.Values)
+	}
 
 	nodeSelectorRequirements := scheduling.NewLabelRequirements(p.Spec.NodeSelector)
 	debugLog("  NodeSelector requirements: %v", nodeSelectorRequirements)
 
-	// if we only have a label selector, that's the only requirement that must match
+	// If no NodeAffinity exists, just use NodeSelector
 	if p.Spec.Affinity == nil || p.Spec.Affinity.NodeAffinity == nil || p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
 		debugLog("  No NodeAffinity.Required found, using only NodeSelector")
+		debugLog("=== MakeTopologyNodeFilter END (no NodeAffinity) ===")
 		return TopologyNodeFilter{
 			Requirements:   []scheduling.Requirements{nodeSelectorRequirements},
 			TaintPolicy:    taintPolicy,
@@ -64,28 +76,68 @@ func MakeTopologyNodeFilter(p *corev1.Pod, taintPolicy corev1.NodeInclusionPolic
 		}
 	}
 
-	// otherwise, we need to match the combination of label selector and any term of the required node affinities since
-	// those terms are OR'd together
 	filter := TopologyNodeFilter{
 		TaintPolicy:    taintPolicy,
 		AffinityPolicy: affinityPolicy,
 		Tolerations:    p.Spec.Tolerations,
 	}
 
-	debugLog("  NodeAffinity.Required has %d terms", len(p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms))
+	numInjected := len(injectedVolumeReqs)
+	numTerms := len(p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
+	debugLog("  NodeAffinity.Required has %d terms, will undo %d injected requirements per term", numTerms, numInjected)
 
 	for i, term := range p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
-		debugLog("  Processing term %d with %d MatchExpressions", i, len(term.MatchExpressions))
+		debugLog("  --- Term %d: has %d total MatchExpressions ---", i, len(term.MatchExpressions))
+
+		// Log ALL expressions in this term (for debugging)
 		for j, expr := range term.MatchExpressions {
-			debugLog("    MatchExpression[%d]: key=%s, op=%s, values=%v", j, expr.Key, expr.Operator, expr.Values)
+			debugLog("    [ALL] MatchExpression[%d]: key=%s, op=%s, values=%v", j, expr.Key, expr.Operator, expr.Values)
 		}
+
+		// Calculate original length by subtracting injected count
+		// Injection appends to the END, so original requirements are at the beginning
+		originalLen := len(term.MatchExpressions) - numInjected
+
+		if originalLen <= 0 {
+			// This term was created during injection (had no original expressions)
+			// Skip it entirely - it shouldn't affect TSC counting
+			debugLog("  Term %d: SKIPPING entirely (was created by injection, originalLen=%d)", i, originalLen)
+			continue
+		}
+
+		// Use only the original expressions (truncate the injected ones)
+		originalExpressions := term.MatchExpressions[:originalLen]
+		debugLog("  Term %d: KEEPING %d original expressions, TRUNCATING last %d (injected)", i, originalLen, numInjected)
+
+		debugLog("  Term %d: Original expressions to use for TSC:", i)
+		for j, expr := range originalExpressions {
+			debugLog("    [KEPT] MatchExpression[%d]: key=%s, op=%s, values=%v", j, expr.Key, expr.Operator, expr.Values)
+		}
+
+		// Log what we're truncating (the injected ones)
+		if numInjected > 0 && originalLen < len(term.MatchExpressions) {
+			debugLog("  Term %d: Truncated (injected) expressions:", i)
+			for j := originalLen; j < len(term.MatchExpressions); j++ {
+				expr := term.MatchExpressions[j]
+				debugLog("    [TRUNCATED] MatchExpression[%d]: key=%s, op=%s, values=%v", j, expr.Key, expr.Operator, expr.Values)
+			}
+		}
+
 		requirements := scheduling.NewRequirements()
 		requirements.Add(nodeSelectorRequirements.Values()...)
-		requirements.Add(scheduling.NewNodeSelectorRequirements(term.MatchExpressions...).Values()...)
+		requirements.Add(scheduling.NewNodeSelectorRequirements(originalExpressions...).Values()...)
 		filter.Requirements = append(filter.Requirements, requirements)
 	}
 
+	// If all terms were created by injection, we have no original NodeAffinity
+	// In this case, just use the NodeSelector (same as if NodeAffinity was nil)
+	if len(filter.Requirements) == 0 {
+		debugLog("  All terms were created by injection, using only NodeSelector")
+		filter.Requirements = []scheduling.Requirements{nodeSelectorRequirements}
+	}
+
 	debugLog("  Final filter has %d requirement sets", len(filter.Requirements))
+	debugLog("=== MakeTopologyNodeFilter END ===")
 	return filter
 }
 

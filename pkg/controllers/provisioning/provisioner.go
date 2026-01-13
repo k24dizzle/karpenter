@@ -270,14 +270,35 @@ func (p *Provisioner) NewScheduler(
 		instanceTypes[np.Name] = its
 	}
 
-	// inject topology constraints
-	pods, err = p.injectVolumeTopologyRequirements(ctx, pods)
+	// ===================================================================================
+	// TSC + VOLUME FIX: Store injected requirements, exclude from TSC filter
+	// ===================================================================================
+	//
+	// THE BUG: Volume injection adds zone to pod's NodeAffinity, which pollutes
+	// the TopologyNodeFilter used for TSC counting. This causes Karpenter to only
+	// count pods in the volume's zone, breaking minDomains checks.
+	//
+	// THE FIX:
+	// 1. Inject volume requirements and capture what was injected
+	// 2. Pass injected requirements to topology
+	// 3. When building TSC filter, skip the injected requirements
+	//
+	// This makes TSC counting use the pod's ORIGINAL affinity (matching K8s scheduler).
+	// ===================================================================================
+
+	fmt.Printf("[DEBUG-TSC-FIX] Step 1: Injecting volume requirements and capturing what was injected\n")
+
+	// Inject volume topology requirements and capture what was injected
+	// The injected requirements will be excluded from TSC counting
+	pods, injectedReqs, err := p.injectVolumeTopologyRequirements(ctx, pods)
 	if err != nil {
 		return nil, fmt.Errorf("injecting volume topology requirements, %w", err)
 	}
 
-	// Calculate cluster topology, if a context error occurs, it is wrapped and returned
-	topology, err := scheduler.NewTopology(ctx, p.kubeClient, p.cluster, stateNodes, nodePools, instanceTypes, pods, opts...)
+	fmt.Printf("[DEBUG-TSC-FIX] Step 2: Building topology (injected reqs will be excluded from TSC filter)\n")
+
+	// Calculate cluster topology - pass injectedReqs so they're excluded from TSC filter
+	topology, err := scheduler.NewTopology(ctx, p.kubeClient, p.cluster, stateNodes, nodePools, instanceTypes, pods, injectedReqs, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("tracking topology counts, %w", err)
 	}
@@ -511,19 +532,38 @@ func validateKarpenterManagedLabelCanExist(p *corev1.Pod) error {
 	return nil
 }
 
-func (p *Provisioner) injectVolumeTopologyRequirements(ctx context.Context, pods []*corev1.Pod) ([]*corev1.Pod, error) {
+// injectVolumeTopologyRequirements injects volume requirements into pods and returns
+// the requirements that were injected for each pod. The injected requirements should
+// be excluded from TSC counting to match Kubernetes scheduler behavior.
+func (p *Provisioner) injectVolumeTopologyRequirements(ctx context.Context, pods []*corev1.Pod) (
+	[]*corev1.Pod,
+	map[types.UID][]corev1.NodeSelectorRequirement, // Injected requirements per pod
+	error,
+) {
 	var schedulablePods []*corev1.Pod
+	injectedReqs := make(map[types.UID][]corev1.NodeSelectorRequirement)
+
 	for _, pod := range pods {
-		if err := p.volumeTopology.Inject(ctx, pod); err != nil {
+		reqs, err := p.volumeTopology.Inject(ctx, pod)
+		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+				return nil, nil, err
 			}
-			log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).Error(err, "failed getting volume topology requirements")
-		} else {
-			schedulablePods = append(schedulablePods, pod)
+			log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).Error(err, "failed injecting volume topology requirements")
+			continue
 		}
+
+		// Store what was injected (may be nil if no volumes)
+		if len(reqs) > 0 {
+			injectedReqs[pod.UID] = reqs
+			fmt.Printf("[DEBUG-TSC-FIX]   Pod %s/%s: injected %d requirements (will exclude from TSC)\n",
+				pod.Namespace, pod.Name, len(reqs))
+		}
+
+		schedulablePods = append(schedulablePods, pod)
 	}
-	return schedulablePods, nil
+
+	return schedulablePods, injectedReqs, nil
 }
 
 func validateNodeSelector(ctx context.Context, p *corev1.Pod) (errs error) {

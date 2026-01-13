@@ -63,6 +63,10 @@ type Topology struct {
 	excludedPods sets.Set[string]
 	cluster      *state.Cluster
 	stateNodes   []*state.StateNode
+	// injectedVolumeReqs maps pod UID to the NodeSelectorRequirements that were
+	// injected for volume topology. These requirements should be excluded from
+	// TSC counting filters to match Kubernetes scheduler behavior.
+	injectedVolumeReqs map[types.UID][]corev1.NodeSelectorRequirement
 }
 
 func NewTopology(
@@ -73,6 +77,7 @@ func NewTopology(
 	nodePools []*v1.NodePool,
 	instanceTypes map[string][]*cloudprovider.InstanceType,
 	pods []*corev1.Pod,
+	injectedVolumeReqs map[types.UID][]corev1.NodeSelectorRequirement, // Requirements to exclude from TSC filter
 	opts ...Options,
 ) (*Topology, error) {
 	t := &Topology{
@@ -84,6 +89,7 @@ func NewTopology(
 		topologyGroups:        map[uint64]*TopologyGroup{},
 		inverseTopologyGroups: map[uint64]*TopologyGroup{},
 		excludedPods:          sets.New[string](),
+		injectedVolumeReqs:    injectedVolumeReqs,
 	}
 
 	// these are the pods that we intend to schedule, so if they are currently in the cluster we shouldn't count them for
@@ -171,7 +177,15 @@ func (t *Topology) Update(ctx context.Context, p *corev1.Pod) error {
 		}
 	}
 
-	topologies := t.newForTopologies(p)
+	// Get injected volume requirements for this pod (if any) to exclude from TSC filter
+	var injectedReqs []corev1.NodeSelectorRequirement
+	if t.injectedVolumeReqs != nil {
+		injectedReqs = t.injectedVolumeReqs[p.UID]
+	}
+	fmt.Printf("[DEBUG-TSC-TOPOLOGY] Update called for pod %s/%s, injectedReqs count: %d\n",
+		p.Namespace, p.Name, len(injectedReqs))
+
+	topologies := t.newForTopologies(p, injectedReqs)
 	affinities, err := t.newForAffinities(ctx, p)
 	if err != nil {
 		return fmt.Errorf("updating affinities, %w", err)
@@ -305,7 +319,7 @@ func (t *Topology) updateInverseAntiAffinity(ctx context.Context, pod *corev1.Po
 			return err
 		}
 
-		tg := NewTopologyGroup(TopologyTypePodAntiAffinity, term.TopologyKey, pod, namespaces, term.LabelSelector, math.MaxInt32, nil, nil, nil, t.domainGroups[term.TopologyKey])
+		tg := NewTopologyGroup(TopologyTypePodAntiAffinity, term.TopologyKey, pod, namespaces, term.LabelSelector, math.MaxInt32, nil, nil, nil, t.domainGroups[term.TopologyKey], nil)
 
 		hash := tg.Hash()
 		if existing, ok := t.inverseTopologyGroups[hash]; !ok {
@@ -438,7 +452,7 @@ func (t *Topology) countDomains(ctx context.Context, tg *TopologyGroup) error {
 	return nil
 }
 
-func (t *Topology) newForTopologies(p *corev1.Pod) []*TopologyGroup {
+func (t *Topology) newForTopologies(p *corev1.Pod, injectedVolumeReqs []corev1.NodeSelectorRequirement) []*TopologyGroup {
 	var topologyGroups []*TopologyGroup
 	for _, tsc := range p.Spec.TopologySpreadConstraints {
 		if t.preferencePolicy == PreferencePolicyIgnore && tsc.WhenUnsatisfiable != corev1.DoNotSchedule {
@@ -464,6 +478,7 @@ func (t *Topology) newForTopologies(p *corev1.Pod) []*TopologyGroup {
 			tsc.NodeTaintsPolicy,
 			tsc.NodeAffinityPolicy,
 			t.domainGroups[tsc.TopologyKey],
+			injectedVolumeReqs, // Requirements to exclude from TSC filter
 		))
 	}
 	return topologyGroups
@@ -505,7 +520,7 @@ func (t *Topology) newForAffinities(ctx context.Context, p *corev1.Pod) ([]*Topo
 			if err != nil {
 				return nil, err
 			}
-			topologyGroups = append(topologyGroups, NewTopologyGroup(topologyType, term.TopologyKey, p, namespaces, term.LabelSelector, math.MaxInt32, nil, nil, nil, t.domainGroups[term.TopologyKey]))
+			topologyGroups = append(topologyGroups, NewTopologyGroup(topologyType, term.TopologyKey, p, namespaces, term.LabelSelector, math.MaxInt32, nil, nil, nil, t.domainGroups[term.TopologyKey], nil))
 		}
 	}
 	return topologyGroups, nil

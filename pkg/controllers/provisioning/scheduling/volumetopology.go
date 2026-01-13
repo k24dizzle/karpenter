@@ -48,7 +48,10 @@ type VolumeTopology struct {
 	kubeClient client.Client
 }
 
-func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
+// Inject adds volume topology requirements to the pod's NodeAffinity and returns
+// the requirements that were injected. The returned requirements should be excluded
+// from TSC counting to match Kubernetes scheduler behavior.
+func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) ([]v1.NodeSelectorRequirement, error) {
 	fmt.Printf("[DEBUG-TSC-INJECT] VolumeTopology.Inject called for pod %s/%s\n", pod.Namespace, pod.Name)
 	fmt.Printf("[DEBUG-TSC-INJECT]   Pod has %d volumes\n", len(pod.Spec.Volumes))
 
@@ -65,7 +68,7 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 	for _, volume := range pod.Spec.Volumes {
 		req, err := v.getRequirements(ctx, pod, volume)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(req) > 0 {
 			fmt.Printf("[DEBUG-TSC-INJECT]   Volume '%s' contributes requirements: %v\n", volume.Name, req)
@@ -75,7 +78,7 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 	if len(requirements) == 0 {
 		fmt.Printf("[DEBUG-TSC-INJECT]   No volume requirements found - skipping injection\n")
 		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info("[DEBUG-TSC] No volume requirements found for pod")
-		return nil
+		return nil, nil // Nothing injected
 	}
 	fmt.Printf("[DEBUG-TSC-INJECT]   TOTAL requirements to inject: %v\n", requirements)
 	// DEBUG: Log the volume requirements that will be injected
@@ -107,8 +110,8 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
 	// DEBUG: Log the pod's final NodeAffinity after injection
 	fmt.Printf("[DEBUG-TSC-INJECT]   AFTER injection - NodeAffinity.Required: %+v\n",
 		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
-	fmt.Printf("[DEBUG-TSC-INJECT]   ^^^ THIS IS THE BUG SOURCE - volume zone is now in pod's NodeAffinity!\n")
-	return nil
+	fmt.Printf("[DEBUG-TSC-INJECT]   Injected requirements (to exclude from TSC): %v\n", requirements)
+	return requirements, nil // Return what we injected
 }
 
 func (v *VolumeTopology) getRequirements(ctx context.Context, pod *v1.Pod, volume v1.Volume) ([]v1.NodeSelectorRequirement, error) {
