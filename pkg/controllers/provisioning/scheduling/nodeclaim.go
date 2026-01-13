@@ -139,8 +139,23 @@ func (n *NodeClaim) CanAdd(ctx context.Context, pod *corev1.Pod, podData *PodDat
 	fmt.Printf("[DEBUG-NODECLAIM]   ✓ Affinity requirements check passed\n")
 	nodeClaimRequirements.Add(podData.Requirements.Values()...)
 
+	// Add volume requirements to nodeClaimRequirements ONLY (not to pod's affinity)
+	// This ensures NodeClaim is created in the correct zone for volumes
+	// while TSC counting uses pod's original affinity (no volume pollution)
+	if len(podData.VolumeRequirements) > 0 {
+		fmt.Printf("[DEBUG-NODECLAIM]   Adding %d volume requirements to nodeClaimRequirements: %v\n",
+			len(podData.VolumeRequirements), podData.VolumeRequirements)
+		volumeReqs := scheduling.NewNodeSelectorRequirements(podData.VolumeRequirements...)
+		nodeClaimRequirements.Add(volumeReqs.Values()...)
+		fmt.Printf("[DEBUG-NODECLAIM]   ✓ Volume requirements added (NodeClaim will be in correct zone)\n")
+	}
+
 	// Check Topology Requirements
+	// NOTE: podData.StrictRequirements does NOT include volume requirements
+	// This ensures TSC counting uses pod's original affinity
 	fmt.Printf("[DEBUG-NODECLAIM]   Checking Topology Requirements (TSC)...\n")
+	fmt.Printf("[DEBUG-NODECLAIM]   podData.StrictRequirements (no volumes): %v\n", podData.StrictRequirements)
+	fmt.Printf("[DEBUG-NODECLAIM]   nodeClaimRequirements (has volumes): %v\n", nodeClaimRequirements)
 	topologyRequirements, err := n.topology.AddRequirements(pod, n.Spec.Taints, podData.StrictRequirements, nodeClaimRequirements, scheduling.AllowUndefinedWellKnownLabels)
 	if err != nil {
 		fmt.Printf("[DEBUG-NODECLAIM]   ✗ TOPOLOGY CHECK FAILED: %v\n", err)

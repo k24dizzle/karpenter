@@ -83,7 +83,6 @@ func NewTopologyGroup(
 	taintPolicy *corev1.NodeInclusionPolicy,
 	affinityPolicy *corev1.NodeInclusionPolicy,
 	domainGroup TopologyDomainGroup,
-	injectedVolumeReqs []corev1.NodeSelectorRequirement, // Requirements to exclude from TSC filter
 ) *TopologyGroup {
 	fmt.Printf("[DEBUG-TSC-GROUP] NewTopologyGroup called: type=%s, key=%s, pod=%s/%s, maxSkew=%d\n",
 		topologyType, topologyKey, pod.Namespace, pod.Name, maxSkew)
@@ -101,8 +100,8 @@ func NewTopologyGroup(
 		}
 		fmt.Printf("[DEBUG-TSC-GROUP]   Creating TopologyNodeFilter with taintPolicy=%s, affinityPolicy=%s\n",
 			nodeTaintsPolicy, nodeAffinityPolicy)
-		fmt.Printf("[DEBUG-TSC-GROUP]   injectedVolumeReqs to exclude: %v\n", injectedVolumeReqs)
-		nodeFilter = MakeTopologyNodeFilter(pod, nodeTaintsPolicy, nodeAffinityPolicy, injectedVolumeReqs)
+		// NOTE: Pod's NodeAffinity is NOT modified (no volume injection), so this uses original affinity
+		nodeFilter = MakeTopologyNodeFilter(pod, nodeTaintsPolicy, nodeAffinityPolicy)
 	}
 
 	selector, err := metav1.LabelSelectorAsSelector(labelSelector)

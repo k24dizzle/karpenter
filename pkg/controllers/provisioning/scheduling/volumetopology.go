@@ -48,21 +48,13 @@ type VolumeTopology struct {
 	kubeClient client.Client
 }
 
-// Inject adds volume topology requirements to the pod's NodeAffinity and returns
-// the requirements that were injected. The returned requirements should be excluded
-// from TSC counting to match Kubernetes scheduler behavior.
-func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) ([]v1.NodeSelectorRequirement, error) {
-	fmt.Printf("[DEBUG-TSC-INJECT] VolumeTopology.Inject called for pod %s/%s\n", pod.Namespace, pod.Name)
-	fmt.Printf("[DEBUG-TSC-INJECT]   Pod has %d volumes\n", len(pod.Spec.Volumes))
-
-	// Log original NodeAffinity BEFORE injection
-	if pod.Spec.Affinity != nil && pod.Spec.Affinity.NodeAffinity != nil &&
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-		fmt.Printf("[DEBUG-TSC-INJECT]   BEFORE injection - NodeAffinity.Required: %+v\n",
-			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
-	} else {
-		fmt.Printf("[DEBUG-TSC-INJECT]   BEFORE injection - No NodeAffinity.Required\n")
-	}
+// GetRequirements returns the volume topology requirements for the pod WITHOUT
+// modifying the pod. These requirements should be added to nodeRequirements
+// (for NodeClaim zone selection) but NOT to podRequirements (for TSC counting).
+// This separation ensures TSC calculations use the pod's original affinity.
+func (v *VolumeTopology) GetRequirements(ctx context.Context, pod *v1.Pod) ([]v1.NodeSelectorRequirement, error) {
+	fmt.Printf("[DEBUG-VOL] VolumeTopology.GetRequirements called for pod %s/%s\n", pod.Namespace, pod.Name)
+	fmt.Printf("[DEBUG-VOL]   Pod has %d volumes\n", len(pod.Spec.Volumes))
 
 	var requirements []v1.NodeSelectorRequirement
 	for _, volume := range pod.Spec.Volumes {
@@ -71,47 +63,19 @@ func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) ([]v1.NodeSele
 			return nil, err
 		}
 		if len(req) > 0 {
-			fmt.Printf("[DEBUG-TSC-INJECT]   Volume '%s' contributes requirements: %v\n", volume.Name, req)
+			fmt.Printf("[DEBUG-VOL]   Volume '%s' contributes requirements: %v\n", volume.Name, req)
 		}
 		requirements = append(requirements, req...)
 	}
 	if len(requirements) == 0 {
-		fmt.Printf("[DEBUG-TSC-INJECT]   No volume requirements found - skipping injection\n")
-		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info("[DEBUG-TSC] No volume requirements found for pod")
-		return nil, nil // Nothing injected
+		fmt.Printf("[DEBUG-VOL]   No volume requirements found\n")
+		return nil, nil
 	}
-	fmt.Printf("[DEBUG-TSC-INJECT]   TOTAL requirements to inject: %v\n", requirements)
-	// DEBUG: Log the volume requirements that will be injected
-	log.FromContext(ctx).WithValues("Pod", klog.KObj(pod)).V(1).Info(fmt.Sprintf("[DEBUG-TSC] Volume requirements to inject: %v", requirements))
-
-	if pod.Spec.Affinity == nil {
-		pod.Spec.Affinity = &v1.Affinity{}
-	}
-	if pod.Spec.Affinity.NodeAffinity == nil {
-		pod.Spec.Affinity.NodeAffinity = &v1.NodeAffinity{}
-	}
-	if pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &v1.NodeSelector{}
-	}
-	if len(pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) == 0 {
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []v1.NodeSelectorTerm{{}}
-	}
-
-	// We add our volume topology zonal requirement to every node selector term.  This causes it to be AND'd with every existing
-	// requirement so that relaxation won't remove our volume requirement.
-	for i := 0; i < len(pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms); i++ {
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[i].MatchExpressions = append(
-			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[i].MatchExpressions, requirements...)
-	}
-
+	fmt.Printf("[DEBUG-VOL]   TOTAL volume requirements: %v\n", requirements)
 	log.FromContext(ctx).
 		WithValues("Pod", klog.KObj(pod)).
-		V(1).Info(fmt.Sprintf("adding requirements derived from pod volumes, %s", requirements))
-	// DEBUG: Log the pod's final NodeAffinity after injection
-	fmt.Printf("[DEBUG-TSC-INJECT]   AFTER injection - NodeAffinity.Required: %+v\n",
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
-	fmt.Printf("[DEBUG-TSC-INJECT]   Injected requirements (to exclude from TSC): %v\n", requirements)
-	return requirements, nil // Return what we injected
+		V(1).Info(fmt.Sprintf("volume topology requirements (NOT injected into pod): %s", requirements))
+	return requirements, nil
 }
 
 func (v *VolumeTopology) getRequirements(ctx context.Context, pod *v1.Pod, volume v1.Volume) ([]v1.NodeSelectorRequirement, error) {
